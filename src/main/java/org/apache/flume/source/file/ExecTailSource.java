@@ -35,7 +35,6 @@ import org.apache.flume.instrumentation.SourceCounter;
 import org.apache.flume.source.AbstractSource;
 import org.apache.flume.source.ExecSourceConfigurationConstants;
 import org.json.simple.JSONValue;
-import org.mortbay.util.ajax.JSON;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -86,26 +85,30 @@ public class ExecTailSource extends AbstractSource implements EventDrivenSource,
     logger.info("files size is {} ", listFiles.size());
     // FIXME: Use a callback-like executor / future to signal us upon failure.
     for(String oneFilePath : listFiles){
-      ExecRunnable runner = 
-    		  new ExecRunnable(getChannelProcessor(), 
-    				  sourceCounter,
-    				  restart, 
-    				  restartThrottle, 
-    				  logStderr, 
-    				  bufferCount, 
-    				  batchTimeout, 
-    				  charset,
-    				  oneFilePath,
-    				  tailing,
-    				  readinterval,
-    				  startAtBeginning,
-    				  serializer,
-    				  new SouceHelper(statusPath, oneFilePath)
-    				  );
-      listRuners.add(runner);
-      Future<?> runnerFuture = executor.submit(runner);
-      listFuture.add(runnerFuture);
-      logger.info("{} is begin running",oneFilePath);
+      SouceHelper sourceHelper = new SouceHelper(statusPath, oneFilePath);
+      File logFile = new File(filepath);
+      if (logFile.length() > sourceHelper.getStatusFileLastIndex()) {
+    	  ExecRunnable runner = 
+    			  new ExecRunnable(getChannelProcessor(), 
+    					  sourceCounter,
+    					  restart, 
+    					  restartThrottle, 
+    					  logStderr, 
+    					  bufferCount, 
+    					  batchTimeout, 
+    					  charset,
+    					  oneFilePath,
+    					  tailing,
+    					  readinterval,
+    					  startAtBeginning,
+    					  serializer,
+    					  sourceHelper
+    					  );
+    	  listRuners.add(runner);
+    	  Future<?> runnerFuture = executor.submit(runner);
+    	  listFuture.add(runnerFuture);
+    	  logger.info("{} is begin running",oneFilePath);
+      }
     }
 
     /*
@@ -427,18 +430,16 @@ public class ExecTailSource extends AbstractSource implements EventDrivenSource,
                 //ËÍchannal
                 synchronized (eventList) {
                   sourceCounter.incrementEventReceivedCount();
-                  
                   HashMap<String, Object> body = new HashMap<String, Object>();
-                  body.put("context",line.toString());
-                  body.put("filepath", filepath);
-                  body.put("contextType", filepath);
-                  body.put("created", System.currentTimeMillis());
-                  body.put("localHostIp", HostUtils.getLocalHostIp());
-                  body.put("localHostName", HostUtils.getLocalHostName());
-                  body.put("domain", getDomain(filepath));
+                  body.put("@filepath", filepath);
+                  body.put("@contextType", filepath);
+                  body.put("@created", System.currentTimeMillis());
+                  body.put("@localHostIp", HostUtils.getLocalHostIp());
+                  body.put("@localHostName", HostUtils.getLocalHostName());
+                  body.put("@domain", getDomain(filepath));
                   body.putAll(serializer.getContentBuilder(line));
-
-                  String bodyjson = JSON.toString(body);
+                  
+                  String bodyjson = JSONValue.toJSONString(body);
                   Event oneEvent = EventBuilder.withBody(bodyjson.getBytes(charset));
                   eventList.add(oneEvent);
                   if(eventList.size() >= bufferCount || timeout()) {
