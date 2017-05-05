@@ -10,7 +10,13 @@ public class FileConstants {
 	  
 	  public static final String CONFIG_STATUS_DIRECTORY = "status.file.path";
 	  
-	  public static final String DEFAULT_STATUS_DIRECTORY = "./log/flume";
+	  public static final String CONFIG_SERIALIZER = "serializer";
+	  
+	  public static final String CONFIG_FILENAME_REGEXP = "filenameRegExp";
+	  
+	  public static final String CONFIG_FILEPATH = "filepath";
+	  
+	  public static final String DEFAULT_STATUS_DIRECTORY = "F:\\log\\flume";
 	  
 	  public static final Boolean DEFAULT_ISTAILING_TRUE = true; 
 	  

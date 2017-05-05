@@ -11,9 +11,9 @@ public class FileSerializer implements AbstractFileSerializer {
 	@Override
 	public Map<String,Object> getContentBuilder(String line) {
 		Map<String,Object> result = Maps.newHashMap();
-		String[] arraySplit = line.split("|");
+		String[] arraySplit = line.split("\\|");
 		for (String split : arraySplit) {
-			String[] one = split.split(":");
+			String[] one = split.split("=");
 			if (one.length == 2) {
 				result.put(one[0], one[1]);
 			}

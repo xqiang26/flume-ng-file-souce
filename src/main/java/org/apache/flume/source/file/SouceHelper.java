@@ -36,17 +36,18 @@ public class SouceHelper {
 		statusFileJsonMap = new LinkedHashMap<String, Long>();
                 
 		if (!(isStatusDirectoryCreated())) {
-			createDirectory();
+			if (createDirectory()) {
+				file = new File(statusFilePath + "/" + statusFileName);
+				if (!isStatusFileCreated()){
+					currentIndex = 0L;
+					createStatusFile();
+				}
+				else
+					currentIndex = getStatusFileLastIndex();
+			}
 		}
 		
-		file = new File(statusFilePath + "/" + statusFileName);
-		
-		if (!isStatusFileCreated()){
-			currentIndex = 0L;
-			createStatusFile();
-		}
-		else
-			currentIndex = getStatusFileLastIndex();
+
 	}
 	
 
@@ -66,9 +67,11 @@ public class SouceHelper {
 		statusFileJsonMap.put(LAST_INDEX_STATUS_FILE, currentIndex);
 		
 		try {
-			Writer fileWriter = new FileWriter(file,false);
-			JSONValue.writeJSONString(statusFileJsonMap, fileWriter);
-			fileWriter.close();
+			if (file.createNewFile() ) {
+				Writer fileWriter = new FileWriter(file,false);
+				JSONValue.writeJSONString(statusFileJsonMap, fileWriter);
+				fileWriter.close();
+			}
 		} catch (IOException e) {
 			LOG.error("Error creating value to status file!!!",e);
 		}

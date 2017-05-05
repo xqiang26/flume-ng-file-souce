@@ -2,10 +2,8 @@ package org.apache.flume.source.file;
 
 import java.io.BufferedReader;
 import java.io.File;
-import java.io.FileWriter;
 import java.io.IOException;
 import java.io.RandomAccessFile;
-import java.io.Writer;
 import java.nio.charset.Charset;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -13,7 +11,6 @@ import java.util.Comparator;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -85,8 +82,8 @@ public class ExecTailSource extends AbstractSource implements EventDrivenSource,
     logger.info("files size is {} ", listFiles.size());
     // FIXME: Use a callback-like executor / future to signal us upon failure.
     for(String oneFilePath : listFiles){
-      SouceHelper sourceHelper = new SouceHelper(statusPath, oneFilePath);
-      File logFile = new File(filepath);
+      File logFile = new File(oneFilePath);
+      SouceHelper sourceHelper = new SouceHelper(statusPath, logFile.getName());
       if (logFile.length() > sourceHelper.getStatusFileLastIndex()) {
     	  ExecRunnable runner = 
     			  new ExecRunnable(getChannelProcessor(), 
@@ -167,13 +164,7 @@ public class ExecTailSource extends AbstractSource implements EventDrivenSource,
 
   @Override
   public void configure(Context context) {
-
-
-    String serializerClazz = FileConstants.DEFAULT_SERIALIZER_CLASS;
-    if (StringUtils.isNotBlank(context.getString(serializerClazz))) {
-      serializerClazz = context.getString(serializerClazz);
-    }
-
+	String serializerClazz = context.getString(FileConstants.CONFIG_SERIALIZER, FileConstants.DEFAULT_SERIALIZER_CLASS);
     try {
       @SuppressWarnings("unchecked")
       Class<? extends Configurable> clazz = (Class<? extends Configurable>) Class
@@ -190,13 +181,13 @@ public class ExecTailSource extends AbstractSource implements EventDrivenSource,
       logger.error("Could not instantiate serializer.", e);
       Throwables.propagate(e);
     }
-	    
-    filepath = context.getString("filepath");
+
+    filepath = context.getString(FileConstants.CONFIG_FILEPATH);
     Preconditions.checkState(filepath != null,
         "The parameter filepath must be specified");
     logger.info("The parameter filepath is {}" ,filepath);
 
-    filenameRegExp = context.getString("filenameRegExp");
+    filenameRegExp = context.getString(FileConstants.CONFIG_FILENAME_REGEXP);
     Preconditions.checkState(filenameRegExp != null,
             "The parameter filenameRegExp must be specified");
     logger.info("The parameter filenameRegExp is {}" ,filenameRegExp);
@@ -230,7 +221,6 @@ public class ExecTailSource extends AbstractSource implements EventDrivenSource,
 
     charset = Charset.forName(context.getString(ExecSourceConfigurationConstants.CHARSET,
         ExecSourceConfigurationConstants.DEFAULT_CHARSET));
-
 
     if (sourceCounter == null) {
       sourceCounter = new SourceCounter(getName());
@@ -366,16 +356,6 @@ public class ExecTailSource extends AbstractSource implements EventDrivenSource,
      */
     private boolean tailing = false;
 
-    private static String getDomain(String filePath){
-      String[] strs = filePath.split("/");
-      String domain ;
-      domain=strs[strs.length-2];
-      if(domain==null || domain.isEmpty()){
-        domain=filePath;
-      }
-      return domain;
-    }
-    
     @Override
     public void run() {
       do {
@@ -386,7 +366,6 @@ public class ExecTailSource extends AbstractSource implements EventDrivenSource,
           filePointer = 0;
         } else {
         	filePointer = sourceHelper.getStatusFileLastIndex();
-//          filePointer = this.logfile.length(); //指针标识从文件的当前长度开始。
         }
         final List<Event> eventList = new ArrayList<Event>();
 
@@ -436,7 +415,6 @@ public class ExecTailSource extends AbstractSource implements EventDrivenSource,
                   body.put("@created", System.currentTimeMillis());
                   body.put("@localHostIp", HostUtils.getLocalHostIp());
                   body.put("@localHostName", HostUtils.getLocalHostName());
-                  body.put("@domain", getDomain(filepath));
                   body.putAll(serializer.getContentBuilder(line));
                   
                   String bodyjson = JSONValue.toJSONString(body);
@@ -444,6 +422,7 @@ public class ExecTailSource extends AbstractSource implements EventDrivenSource,
                   eventList.add(oneEvent);
                   if(eventList.size() >= bufferCount || timeout()) {
                     flushEventBatch(eventList);
+                    filePointer = randomAccessFile.getFilePointer();
                     sourceHelper.updateStatusFile(filePointer);
                   }
                 }
@@ -494,7 +473,8 @@ public class ExecTailSource extends AbstractSource implements EventDrivenSource,
     }
 
     private void flushEventBatch(List<Event> eventList){
-      channelProcessor.processEventBatch(eventList);
+      if ( channelProcessor != null )  
+    	  channelProcessor.processEventBatch(eventList);
       sourceCounter.addToEventAcceptedCount(eventList.size());
       eventList.clear();
       lastPushToChannel = systemClock.currentTimeMillis();
