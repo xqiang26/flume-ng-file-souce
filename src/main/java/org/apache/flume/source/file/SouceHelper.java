@@ -34,23 +34,22 @@ public class SouceHelper {
 		statusFileName = fileName;
 		directory = new File(statusFilePath);
 		statusFileJsonMap = new LinkedHashMap<String, Long>();
-                
+        
+		LOG.info(">=statusFilePath:" + statusFilePath + "/" + statusFileName);
+		
 		if (!(isStatusDirectoryCreated())) {
-			if (createDirectory()) {
-				file = new File(statusFilePath + "/" + statusFileName);
-				if (!isStatusFileCreated()){
-					currentIndex = 0L;
-					createStatusFile();
-				}
-				else
-					currentIndex = getStatusFileLastIndex();
-			}
+			createDirectory();
 		}
 		
-
+		LOG.info(">=statusFilePath:" + statusFilePath + "/" + statusFileName);
+		file = new File(statusFilePath + "/" + statusFileName);
+		if (file == null || !isStatusFileCreated()){
+			currentIndex = 0L;
+			createStatusFile();
+		}
+		else
+			currentIndex = getStatusFileLastIndex();
 	}
-	
-
 	
 	private boolean isStatusFileCreated(){
 		return file.exists() && !file.isDirectory() ? true: false;

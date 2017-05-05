@@ -3,6 +3,7 @@ package org.apache.flume.source.file;
 import java.util.Map;
 
 import org.apache.flume.Context;
+import org.apache.flume.conf.ComponentConfiguration;
 
 import com.google.common.collect.Maps;
 
@@ -23,6 +24,12 @@ public class FileSerializer implements AbstractFileSerializer {
 
 	@Override
 	public void configure(Context arg0) {
+		// TODO Auto-generated method stub
+		
+	}
+
+	@Override
+	public void configure(ComponentConfiguration arg0) {
 		// TODO Auto-generated method stub
 		
 	}

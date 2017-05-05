@@ -3,8 +3,9 @@ package org.apache.flume.source.file;
 import java.util.Map;
 
 import org.apache.flume.conf.Configurable;
+import org.apache.flume.conf.ConfigurableComponent;
 
-public interface AbstractFileSerializer extends Configurable{
+public interface AbstractFileSerializer extends Configurable, ConfigurableComponent{
 
   /**
    * @param line 从文件中读取一行解析输出结构

@@ -20,7 +20,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-import org.apache.commons.lang.StringUtils;
 import org.apache.flume.Context;
 import org.apache.flume.Event;
 import org.apache.flume.EventDrivenSource;
@@ -167,11 +166,11 @@ public class ExecTailSource extends AbstractSource implements EventDrivenSource,
 	String serializerClazz = context.getString(FileConstants.CONFIG_SERIALIZER, FileConstants.DEFAULT_SERIALIZER_CLASS);
     try {
       @SuppressWarnings("unchecked")
-      Class<? extends Configurable> clazz = (Class<? extends Configurable>) Class
+	Class<? extends Configurable> clazz = (Class<? extends Configurable>) Class
           .forName(serializerClazz);
       Configurable serializerTmp = clazz.newInstance();
 
-      if (serializer instanceof FileSerializer) {
+      if (serializerTmp instanceof FileSerializer) {
     	  serializer = (FileSerializer) serializerTmp;
       } else {
         throw new IllegalArgumentException(serializerClazz
