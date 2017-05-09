@@ -410,7 +410,6 @@ public class ExecTailSource extends AbstractSource implements EventDrivenSource,
                   sourceCounter.incrementEventReceivedCount();
                   HashMap<String, Object> body = new HashMap<String, Object>();
                   body.put("@filepath", filepath);
-                  body.put("@contextType", filepath);
                   body.put("@created", System.currentTimeMillis());
                   body.put("@localHostIp", HostUtils.getLocalHostIp());
                   body.put("@localHostName", HostUtils.getLocalHostName());

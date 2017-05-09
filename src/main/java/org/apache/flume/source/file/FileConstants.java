@@ -24,6 +24,7 @@ public class FileConstants {
 	  
 	  public static final Boolean DEFAULT_STARTATBEGINNING = false;
 	  
-	  public static final String DEFAULT_SERIALIZER_CLASS = "org.apache.flume.source.file.FileSerializer";
+	  public static final String DEFAULT_SERIALIZER_CLASS = "org.apache.flume.source.file.RandomFileSerializer";
+	  
 	  
 }

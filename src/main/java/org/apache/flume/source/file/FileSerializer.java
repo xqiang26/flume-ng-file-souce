@@ -33,5 +33,4 @@ public class FileSerializer implements AbstractFileSerializer {
 		// TODO Auto-generated method stub
 		
 	}
-
 }
