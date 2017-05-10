@@ -404,17 +404,30 @@ public class ExecTailSource extends AbstractSource implements EventDrivenSource,
             if (fileLength > filePointer) {
               randomAccessFile.seek(filePointer);
               String line = randomAccessFile.readLine();
+              Object lastDateTime = null;
+              Object lastLevel = "info";
               while (line != null) {
                 //ËÍchannal
                 synchronized (eventList) {
                   sourceCounter.incrementEventReceivedCount();
                   HashMap<String, Object> body = new HashMap<String, Object>();
                   body.put("@filepath", filepath);
-                  body.put("@created", System.currentTimeMillis());
+                  body.put("@createdate", new Date());
+                  body.put("@timestamp", System.currentTimeMillis());
                   body.put("@localHostIp", HostUtils.getLocalHostIp());
                   body.put("@localHostName", HostUtils.getLocalHostName());
                   body.putAll(serializer.getContentBuilder(line));
+                  if (!body.containsKey("insert_date")) {
+                	  body.put("insert_date", lastDateTime);
+                  } else {
+                	  lastDateTime = body.get("insert_date");
+                  }
                   
+                  if (!body.containsKey("level")) {
+                	  body.put("level", lastLevel);
+                  } else {
+                	  lastLevel = body.get("level");
+                  }
                   String bodyjson = JSONValue.toJSONString(body);
                   Event oneEvent = EventBuilder.withBody(bodyjson.getBytes(charset));
                   eventList.add(oneEvent);
