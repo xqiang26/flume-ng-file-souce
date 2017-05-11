@@ -57,6 +57,7 @@ public class ExecTailSource extends AbstractSource implements EventDrivenSource,
   private String filepath;
   private String filenameRegExp;
   private String statusPath;
+  private String tagName; //标记名称
   private boolean tailing;
   private Integer readinterval;
   private boolean startAtBeginning;
@@ -98,7 +99,8 @@ public class ExecTailSource extends AbstractSource implements EventDrivenSource,
     					  readinterval,
     					  startAtBeginning,
     					  serializer,
-    					  sourceHelper
+    					  sourceHelper,
+    					  tagName
     					  );
     	  listRuners.add(runner);
     	  Future<?> runnerFuture = executor.submit(runner);
@@ -203,6 +205,8 @@ public class ExecTailSource extends AbstractSource implements EventDrivenSource,
     readinterval=context.getInteger(FileConstants.CONFIG_READINTERVAL_THROTTLE,
     		FileConstants.DEFAULT_READINTERVAL);
 
+    tagName = context.getString(FileConstants.CONFIG_TAG_NAME);
+    
     startAtBeginning=context.getBoolean(FileConstants.CONFIG_STARTATBEGINNING_THROTTLE,
     		FileConstants.DEFAULT_STARTATBEGINNING);
 
@@ -220,7 +224,7 @@ public class ExecTailSource extends AbstractSource implements EventDrivenSource,
 
     charset = Charset.forName(context.getString(ExecSourceConfigurationConstants.CHARSET,
         ExecSourceConfigurationConstants.DEFAULT_CHARSET));
-
+   
     if (sourceCounter == null) {
       sourceCounter = new SourceCounter(getName());
     }
@@ -299,7 +303,8 @@ public class ExecTailSource extends AbstractSource implements EventDrivenSource,
         Integer readinterval,
         boolean startAtBeginning,
         AbstractFileSerializer serializerClazz,
-        SouceHelper sourceHelper) {
+        SouceHelper sourceHelper,
+        String tagName) {
     	
       this.serializer = serializerClazz;
       this.channelProcessor = channelProcessor;
@@ -316,6 +321,7 @@ public class ExecTailSource extends AbstractSource implements EventDrivenSource,
       this.readinterval=readinterval;
       this.startAtBeginning=startAtBeginning;
       this.sourceHelper = sourceHelper;
+      this.tagName = tagName;
     }
 
 
@@ -334,6 +340,7 @@ public class ExecTailSource extends AbstractSource implements EventDrivenSource,
     ScheduledExecutorService timedFlushService;
     ScheduledFuture<?> future;
     private String filepath;
+    private String tagName;
 
     /**
      * 当读到文件结尾后暂停的时间间隔
@@ -411,6 +418,7 @@ public class ExecTailSource extends AbstractSource implements EventDrivenSource,
                 synchronized (eventList) {
                   sourceCounter.incrementEventReceivedCount();
                   HashMap<String, Object> body = new HashMap<String, Object>();
+                  body.put("@tagname", tagName);
                   body.put("@filepath", filepath);
                   body.put("@createdate", new Date());
                   body.put("@timestamp", System.currentTimeMillis());

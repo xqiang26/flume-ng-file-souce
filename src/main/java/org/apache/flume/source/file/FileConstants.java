@@ -1,7 +1,9 @@
 package org.apache.flume.source.file;
 
 public class FileConstants {
-	
+		//标记名称, 用于标记这个应用名称
+	  public static final String CONFIG_TAG_NAME = "tag_name";
+	  
 	  public static final String CONFIG_TAILING_THROTTLE  = "tailing";
 	  
 	  public static final String CONFIG_READINTERVAL_THROTTLE = "readinterval";
