@@ -1,5 +1,6 @@
 package org.apache.flume.source.file;
 
+import java.text.ParseException;
 import java.util.Map;
 import java.util.regex.Matcher;
 
@@ -26,13 +27,17 @@ public class RandomFileSerializer extends FileSerializer {
 	    // 现在创建 matcher 对象
 	    Matcher m = DATATIME_PATTERN.matcher(line);
 	    if (m.find()) {
-	    	result.put("insert_date", m.group(1));
-	    	String temp = m.group(2).trim();
-	    	int firstIndex = temp.indexOf(" ");
-	    	String level = temp.substring(0, firstIndex);
-	    	result.put("level", level);
-	    	String extendsParam = temp.substring(temp.indexOf(" ", firstIndex + 1) + 1);
-	    	result.put("message", extendsParam);
+			try {
+				String insertDate = FileConstants.DEFAULT_DATE_FORMAT.format(FileConstants.LOG_SOURCE_DATE_FORMAT.parse(m.group(1)));
+				result.put("insert_date", insertDate);
+				String temp = m.group(2).trim();
+				int firstIndex = temp.indexOf(" ");
+				String level = temp.substring(0, firstIndex);
+				result.put("level", level);
+				String extendsParam = temp.substring(temp.indexOf(" ", firstIndex + 1) + 1);
+				result.put("message", extendsParam);
+			} catch (ParseException e) {
+			}
 	    } else {
 	    	result.put("message", line);
 	    }

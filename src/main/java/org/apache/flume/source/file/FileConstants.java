@@ -1,5 +1,7 @@
 package org.apache.flume.source.file;
 
+import java.text.SimpleDateFormat;
+
 public class FileConstants {
 		//标记名称, 用于标记这个应用名称
 	  public static final String CONFIG_TAG_NAME = "tag_name";
@@ -28,5 +30,9 @@ public class FileConstants {
 	  
 	  public static final String DEFAULT_SERIALIZER_CLASS = "org.apache.flume.source.file.RandomFileSerializer";
 	  
+	  public static final String DEFAULT_READ_FILE_ENCODE = "iso8859-1";
 	  
+	  public static final SimpleDateFormat LOG_SOURCE_DATE_FORMAT = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss,SSS");
+	  
+	  public static final SimpleDateFormat DEFAULT_DATE_FORMAT = new SimpleDateFormat("yyyy-MM-dd’T'HH:mm:ss.SSS");
 }

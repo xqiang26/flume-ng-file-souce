@@ -20,6 +20,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import org.apache.commons.lang.StringUtils;
 import org.apache.flume.Context;
 import org.apache.flume.Event;
 import org.apache.flume.EventDrivenSource;
@@ -381,7 +382,6 @@ public class ExecTailSource extends AbstractSource implements EventDrivenSource,
                 Thread.currentThread().getId() + "-%d").build());
         RandomAccessFile randomAccessFile = null;
         try {
-
           randomAccessFile= new RandomAccessFile(logfile, "r"); //创建随机读写文件
           future = timedFlushService.scheduleWithFixedDelay(new Runnable() {
                                                               @Override
@@ -408,46 +408,50 @@ public class ExecTailSource extends AbstractSource implements EventDrivenSource,
               randomAccessFile = new RandomAccessFile(logfile, "r");
               filePointer = 0;
             }
+            
             if (fileLength > filePointer) {
               randomAccessFile.seek(filePointer);
-              String line = randomAccessFile.readLine();
+              String line = nextLine(randomAccessFile);
               Object lastDateTime = null;
               Object lastLevel = "info";
               while (line != null) {
-                //送channal
-                synchronized (eventList) {
-                  sourceCounter.incrementEventReceivedCount();
-                  HashMap<String, Object> body = new HashMap<String, Object>();
-                  body.put("@tagname", tagName);
-                  body.put("@filepath", filepath);
-                  body.put("@createdate", new Date());
-                  body.put("@timestamp", System.currentTimeMillis());
-                  body.put("@localHostIp", HostUtils.getLocalHostIp());
-                  body.put("@localHostName", HostUtils.getLocalHostName());
-                  body.putAll(serializer.getContentBuilder(line));
-                  if (!body.containsKey("insert_date")) {
-                	  body.put("insert_date", lastDateTime);
-                  } else {
-                	  lastDateTime = body.get("insert_date");
-                  }
-                  
-                  if (!body.containsKey("level")) {
-                	  body.put("level", lastLevel);
-                  } else {
-                	  lastLevel = body.get("level");
-                  }
-                  String bodyjson = JSONValue.toJSONString(body);
-                  Event oneEvent = EventBuilder.withBody(bodyjson.getBytes(charset));
-                  eventList.add(oneEvent);
-                  if(eventList.size() >= bufferCount || timeout()) {
-                    flushEventBatch(eventList);
-                    filePointer = randomAccessFile.getFilePointer();
-                    sourceHelper.updateStatusFile(filePointer);
-                  }
-                }
-
+            	if (StringUtils.isNotBlank(line)) {
+	                //送channal
+	                synchronized (eventList) {
+	                  sourceCounter.incrementEventReceivedCount();
+	                  HashMap<String, Object> body = new HashMap<String, Object>();
+	                  if (StringUtils.isNotBlank(tagName)) {
+	                	  body.put("@tagname", tagName);
+	                  }
+	                  body.put("@filepath", filepath);
+	                  body.put("@createdate", FileConstants.DEFAULT_DATE_FORMAT.format(new Date()));
+	                  body.put("@timestamp", System.currentTimeMillis());
+	                  body.put("@localHostIp", HostUtils.getLocalHostIp());
+	                  body.put("@localHostName", HostUtils.getLocalHostName());
+	                  body.putAll(serializer.getContentBuilder(line));
+	                  if (!body.containsKey("insert_date")) {
+	                	  body.put("insert_date", lastDateTime);
+	                  } else {
+	                	  lastDateTime = body.get("insert_date");
+	                  }
+	                  
+	                  if (!body.containsKey("level")) {
+	                	  body.put("level", lastLevel);
+	                  } else {
+	                	  lastLevel = body.get("level");
+	                  }
+	                  String bodyjson = JSONValue.toJSONString(body);
+	                  Event oneEvent = EventBuilder.withBody(bodyjson.getBytes(charset));
+	                  eventList.add(oneEvent);
+	                  if(eventList.size() >= bufferCount || timeout()) {
+	                    flushEventBatch(eventList);
+	                    filePointer = randomAccessFile.getFilePointer();
+	                    sourceHelper.updateStatusFile(filePointer);
+	                  }
+	                }
+            	}
                 //读下一行
-                line = randomAccessFile.readLine();
+                line = nextLine(randomAccessFile);
               }
               filePointer = randomAccessFile.getFilePointer();
             }
@@ -490,7 +494,26 @@ public class ExecTailSource extends AbstractSource implements EventDrivenSource,
         }
       } while(restart);
     }
-
+    
+    /**
+     * 读取文件,并转码utf8
+     * 特别要说明一下,iso8859-1 是读取文件的编码
+     * @param file
+     * @return
+     */
+    private String nextLine(RandomAccessFile randomAccessFile) {
+    	String line = null;
+    	try {
+			line = randomAccessFile.readLine();
+			if (StringUtils.isNotBlank(line))
+				return new String(line.getBytes(FileConstants.DEFAULT_READ_FILE_ENCODE),
+		         		ExecSourceConfigurationConstants.DEFAULT_CHARSET);
+		} catch (IOException e) {
+			logger.debug("读取行 异常readLine", e);
+		}
+    	return line;
+    }
+    
     private void flushEventBatch(List<Event> eventList){
       if ( channelProcessor != null )  
     	  channelProcessor.processEventBatch(eventList);

@@ -29,7 +29,7 @@ public class ExecTailSourceTest {
 	  @Test
 	  public void shouldIndexOneEvent() throws Exception {
 		Map<String,String> parameters = Maps.newHashMap();
-		parameters.put("filepath", "F:\\log");
+		parameters.put("filepath", "D:\\tools\\apache-flume-1.7.0-bin\\conf");
 		parameters.put("filenameRegExp", "log");
 	    Configurables.configure(fixture, new Context(parameters));
 	    fixture.start();
