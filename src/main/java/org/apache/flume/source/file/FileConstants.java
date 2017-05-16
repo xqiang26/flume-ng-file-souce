@@ -20,6 +20,10 @@ public class FileConstants {
 	  
 	  public static final String CONFIG_FILEPATH = "filepath";
 	  
+	  public static final String CONFIG_FLUSH_TIMEOUT = "flush_timeout";
+	  
+	  public static final Long DEFAULT_FLUSH_TIMEOUT = 5000L;
+	  
 	  public static final String DEFAULT_STATUS_DIRECTORY = "F:\\log\\flume";
 	  
 	  public static final Boolean DEFAULT_ISTAILING_TRUE = true; 
@@ -34,5 +38,5 @@ public class FileConstants {
 	  
 	  public static final SimpleDateFormat LOG_SOURCE_DATE_FORMAT = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss,SSS");
 	  
-	  public static final SimpleDateFormat DEFAULT_DATE_FORMAT = new SimpleDateFormat("yyyy-MM-dd¡¯T'HH:mm:ss.SSS");
+	  public static final SimpleDateFormat DEFAULT_DATE_FORMAT = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS");
 }

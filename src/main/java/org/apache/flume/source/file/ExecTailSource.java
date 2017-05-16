@@ -1,16 +1,17 @@
 package org.apache.flume.source.file;
 
-import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.nio.charset.Charset;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Calendar;
 import java.util.Comparator;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -24,6 +25,7 @@ import org.apache.commons.lang.StringUtils;
 import org.apache.flume.Context;
 import org.apache.flume.Event;
 import org.apache.flume.EventDrivenSource;
+import org.apache.flume.FlumeException;
 import org.apache.flume.SystemClock;
 import org.apache.flume.channel.ChannelProcessor;
 import org.apache.flume.conf.Configurable;
@@ -31,6 +33,7 @@ import org.apache.flume.event.EventBuilder;
 import org.apache.flume.instrumentation.SourceCounter;
 import org.apache.flume.source.AbstractSource;
 import org.apache.flume.source.ExecSourceConfigurationConstants;
+import org.elasticsearch.common.collect.Maps;
 import org.json.simple.JSONValue;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -40,15 +43,15 @@ import com.google.common.base.Throwables;
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
 
 
-public class ExecTailSource extends AbstractSource implements EventDrivenSource,Configurable {
+public class ExecTailSource  extends AbstractSource implements EventDrivenSource, Configurable {
 
   private static final Logger logger = LoggerFactory
       .getLogger(ExecTailSource.class);
 
   private SourceCounter sourceCounter;
   private ExecutorService executor;
-  private List<ExecRunnable> listRuners;
-  private List<Future<?>> listFuture;
+  private Map<String, ExecRunnable> mapRuners;
+  private Map<String, Future<?>> mapFuture;
   private long restartThrottle;
   private boolean restart = true;
   private boolean logStderr;
@@ -63,173 +66,288 @@ public class ExecTailSource extends AbstractSource implements EventDrivenSource,
   private Integer readinterval;
   private boolean startAtBeginning;
   private AbstractFileSerializer serializer;
+  private List<String> listFiles; 
+  private ScheduledExecutorService timedFlushService;
+  private ScheduledFuture<?> timedFuture;
+  private long flushtimeout;
+  
+	public static String getYesterday() {
+		Calendar calendar = Calendar.getInstance();
+		calendar.set(Calendar.DATE, calendar.get(Calendar.DATE) - 1);
+		calendar.set(Calendar.HOUR_OF_DAY, 0);
+		calendar.set(Calendar.MINUTE, 0);
+		calendar.set(Calendar.SECOND, 0);
+		calendar.set(Calendar.MILLISECOND, 0);
+		
+		int year = calendar.get(Calendar.YEAR);
+		int month = calendar.get(Calendar.MONTH);
+		int day = calendar.get(Calendar.DAY_OF_MONTH);
+		return String.format("%04d-%02d-%02d", year, month, day);
+	}
+	
+  /**
+   * 到了，晚上
+   */
+	public void process() {
+		try {
+		    List<String> tmpListFiles = getFileList(filepath);
+		    if(tmpListFiles==null || tmpListFiles.isEmpty()){
+		      Preconditions.checkState(tmpListFiles != null && !tmpListFiles.isEmpty(),
+		              "The filepath's file not have fiels with filenameRegExp");
+		    }
+		    
+		    /**
+		     * 如果日志文件数量发送变化，说明日志有可能是人为的操作或者是新的日志文件生成；则需求更新日志的状态文件；
+		     */
+		    if (tmpListFiles.size() != listFiles.size()) {
+				stop();
+				logger.info("开始检查日志文件发生变更, 并处理有效的日志文件");
+				String dateTime = getYesterday();
+				for (String fileName : tmpListFiles) {
+					File logFile = new File(fileName);
+					String logFileName = logFile.getName();
+					File file = new File(statusPath + "/" + logFileName);
+					/**
+					 * 如果状态文件不存在，并且该文件的日期是昨天；则认为是系统将info.log 这类的文件更新成info.log-xxxx-xx-xx
+					 * 这里只针对，晚上0点时，日志文件发生变更
+					 */
+					if (logFileName.endsWith(dateTime) && !file.exists() && logFile.length() > 0) {
+						String[] arrayLogFileName = logFileName.split(".log.");
+						switch (arrayLogFileName[0]) {
+						case "info": {
+								logger.info("开始检查日志文件发生变更,info.log ==> " + logFileName);
+								SouceHelper sourceHelper = new SouceHelper(statusPath, "info.log");
+								sourceHelper.rename(logFileName);
+							}
+							break;
+						case "error": {
+							logger.info("开始检查日志文件发生变更,error.log ==> " + logFileName);
+								SouceHelper sourceHelper = new SouceHelper(statusPath, "error.log");
+								sourceHelper.rename(logFileName);
+							}
+							break;
+						case "debug": {
+								logger.info("开始检查日志文件发生变更,debug.log ==> " + logFileName);
+								SouceHelper sourceHelper = new SouceHelper(statusPath, "debug.log");
+								sourceHelper.rename(logFileName);
+							}
+							break;
+						}
+					}
+				}
+				start();
+		    }
+		} catch (Exception e) {
+			logger.error("Error procesing row", e);
+		}
+	}
+	
+	@Override
+	public void configure(Context context) throws FlumeException {
+		String serializerClazz = context.getString(FileConstants.CONFIG_SERIALIZER, FileConstants.DEFAULT_SERIALIZER_CLASS);
+	    try {
+	      @SuppressWarnings("unchecked")
+		Class<? extends Configurable> clazz = (Class<? extends Configurable>) Class
+	          .forName(serializerClazz);
+	      Configurable serializerTmp = clazz.newInstance();
 
-  @Override
-  public void start() {
-    logger.info("=start=> flume tail source start begin time:"+new Date().toString());
-    logger.info("ExecTail source starting with filepath:{}", filepath);
+	      if (serializerTmp instanceof FileSerializer) {
+	    	  serializer = (FileSerializer) serializerTmp;
+	      } else {
+	        throw new IllegalArgumentException(serializerClazz
+	            + " is not an FileSerializer");
+	      }
+	    } catch (Exception e) {
+	      logger.error("Could not instantiate serializer.", e);
+	      Throwables.propagate(e);
+	    }
 
-    List<String> listFiles = getFileList(filepath);
-    if(listFiles==null || listFiles.isEmpty()){
-      Preconditions.checkState(listFiles != null && !listFiles.isEmpty(),
-              "The filepath's file not have fiels with filenameRegExp");
-    }
+	    filepath = context.getString(FileConstants.CONFIG_FILEPATH);
+	    Preconditions.checkState(filepath != null,
+	        "The parameter filepath must be specified");
+	    logger.info("The parameter filepath is {}" ,filepath);
 
-    executor = Executors.newFixedThreadPool(listFiles.size());
+	    filenameRegExp = context.getString(FileConstants.CONFIG_FILENAME_REGEXP);
+	    Preconditions.checkState(filenameRegExp != null,
+	            "The parameter filenameRegExp must be specified");
+	    logger.info("The parameter filenameRegExp is {}" ,filenameRegExp);
 
-    listRuners = new ArrayList<ExecRunnable>();
-    listFuture = new ArrayList<Future<?>>();
+	    statusPath = context.getString(FileConstants.CONFIG_STATUS_DIRECTORY, 
+	    		FileConstants.DEFAULT_STATUS_DIRECTORY);
+	    
+	    flushtimeout = context.getLong(FileConstants.CONFIG_FLUSH_TIMEOUT, 
+	    		FileConstants.DEFAULT_FLUSH_TIMEOUT);
+	    
+	    restartThrottle = context.getLong(ExecSourceConfigurationConstants.CONFIG_RESTART_THROTTLE,
+	        ExecSourceConfigurationConstants.DEFAULT_RESTART_THROTTLE);
 
-    logger.info("files size is {} ", listFiles.size());
-    // FIXME: Use a callback-like executor / future to signal us upon failure.
-    for(String oneFilePath : listFiles){
-      File logFile = new File(oneFilePath);
-      SouceHelper sourceHelper = new SouceHelper(statusPath, logFile.getName());
-      if (logFile.length() > sourceHelper.getStatusFileLastIndex()) {
-    	  ExecRunnable runner = 
-    			  new ExecRunnable(getChannelProcessor(), 
-    					  sourceCounter,
-    					  restart, 
-    					  restartThrottle, 
-    					  logStderr, 
-    					  bufferCount, 
-    					  batchTimeout, 
-    					  charset,
-    					  oneFilePath,
-    					  tailing,
-    					  readinterval,
-    					  startAtBeginning,
-    					  serializer,
-    					  sourceHelper,
-    					  tagName
-    					  );
-    	  listRuners.add(runner);
-    	  Future<?> runnerFuture = executor.submit(runner);
-    	  listFuture.add(runnerFuture);
-    	  logger.info("{} is begin running",oneFilePath);
-      }
-    }
+	    tailing = context.getBoolean(FileConstants.CONFIG_TAILING_THROTTLE,
+	    		FileConstants.DEFAULT_ISTAILING_TRUE);
 
-    /*
-     * NB: This comes at the end rather than the beginning of the method because
-     * it sets our state to running. We want to make sure the executor is alive
-     * and well first.
-     */
-    sourceCounter.start();
-    super.start();
-    logger.info("=start=> flume tail source start end time:"+new Date().toString());
-    logger.debug("ExecTail source started");
-  }
+	    readinterval=context.getInteger(FileConstants.CONFIG_READINTERVAL_THROTTLE,
+	    		FileConstants.DEFAULT_READINTERVAL);
 
-  @Override
-  public void stop() {
+	    tagName = context.getString(FileConstants.CONFIG_TAG_NAME);
+	    
+	    startAtBeginning=context.getBoolean(FileConstants.CONFIG_STARTATBEGINNING_THROTTLE,
+	    		FileConstants.DEFAULT_STARTATBEGINNING);
 
-    logger.info("=stop=> flume tail source stop begin time:"+new Date().toString());
-    if(listRuners !=null && !listRuners.isEmpty()){
-      for(ExecRunnable oneRunner : listRuners){
-        if(oneRunner != null) {
-          oneRunner.setRestart(false);
-          oneRunner.kill();
-        }
-      }
-    }
+	    restart = context.getBoolean(ExecSourceConfigurationConstants.CONFIG_RESTART,
+	        ExecSourceConfigurationConstants.DEFAULT_RESTART);
 
+	    logStderr = context.getBoolean(ExecSourceConfigurationConstants.CONFIG_LOG_STDERR,
+	        ExecSourceConfigurationConstants.DEFAULT_LOG_STDERR);
 
-    if(listFuture !=null && !listFuture.isEmpty()){
-      for(Future<?> oneFuture : listFuture){
-        if (oneFuture != null) {
-          logger.debug("Stopping ExecTail runner");
-          oneFuture.cancel(true);
-          logger.debug("ExecTail runner stopped");
-        }
-      }
-    }
+	    bufferCount = context.getInteger(ExecSourceConfigurationConstants.CONFIG_BATCH_SIZE,
+	        ExecSourceConfigurationConstants.DEFAULT_BATCH_SIZE);
 
-    executor.shutdown();
-    while (!executor.isTerminated()) {
-      logger.debug("Waiting for ExecTail executor service to stop");
-      try {
-        executor.awaitTermination(500, TimeUnit.MILLISECONDS);
-      } catch (InterruptedException e) {
-        logger.debug("Interrupted while waiting for ExecTail executor service "
-            + "to stop. Just exiting.");
-        Thread.currentThread().interrupt();
-      }
-    }
+	    batchTimeout = context.getLong(ExecSourceConfigurationConstants.CONFIG_BATCH_TIME_OUT,
+	        ExecSourceConfigurationConstants.DEFAULT_BATCH_TIME_OUT);
 
+	    charset = Charset.forName(context.getString(ExecSourceConfigurationConstants.CHARSET,
+	        ExecSourceConfigurationConstants.DEFAULT_CHARSET));
+	   
+	    if (sourceCounter == null) {
+	      sourceCounter = new SourceCounter(getName());
+	    }
+	}
+	
+	@Override
+	public void start() throws FlumeException {
+	    logger.info("=start=> flume tail source start begin time:"+new Date().toString());
+	    logger.info("ExecTail source starting with filepath:{}", filepath);
+	    
+	    mapRuners = Maps.newHashMap();
+	    mapFuture = Maps.newHashMap();
+	    startTmp();
+	    /*
+	     * NB: This comes at the end rather than the beginning of the method because
+	     * it sets our state to running. We want to make sure the executor is alive
+	     * and well first.
+	     */
+	    timedFlushService = Executors.newSingleThreadScheduledExecutor(
+					      new ThreadFactoryBuilder().setNameFormat(
+					      "timedFlushExecService" +
+					      Thread.currentThread().getId() + "-%d").build());
+	    timedFuture = timedFlushService.scheduleWithFixedDelay(new Runnable() {
+	        @Override
+	        public void run() {
+	        	process();
+	        }
+	      },flushtimeout, flushtimeout, TimeUnit.MILLISECONDS);
+        
+	    sourceCounter.start();
+	    super.start();
+	    logger.info("=start=> flume tail source start end time:"+new Date().toString());
+	    logger.debug("ExecTail source started");
+	}
+	
+	public void startTmp() {
+	    listFiles = getFileList(filepath);
+	    if(listFiles==null || listFiles.isEmpty()){
+	      Preconditions.checkState(listFiles != null && !listFiles.isEmpty(),
+	              "The filepath's file not have fiels with filenameRegExp");
+	    }
+	    executor = Executors.newFixedThreadPool(listFiles.size());
+	    logger.info("files size is {} ", listFiles.size());
+	    for(String oneFilePath : listFiles){
+	      File logFile = new File(oneFilePath);
+	      SouceHelper sourceHelper = new SouceHelper(statusPath, logFile.getName());
+	      logger.info("logFilePath:" + logFile.getName() + ":logFile.length()," +  logFile.length() + " getStatusFileLastIndex(): " + sourceHelper.getStatusFileLastIndex());
+	      if (logFile.getName().endsWith(".log") || 
+	    		 logFile.length() > sourceHelper.getStatusFileLastIndex()) {
+	    	  ExecRunnable runner = 
+	    			  new ExecRunnable(getChannelProcessor(), 
+	    					  sourceCounter,
+	    					  restart, 
+	    					  restartThrottle, 
+	    					  logStderr, 
+	    					  bufferCount, 
+	    					  batchTimeout, 
+	    					  charset,
+	    					  oneFilePath,
+	    					  tailing,
+	    					  readinterval,
+	    					  startAtBeginning,
+	    					  serializer,
+	    					  sourceHelper,
+	    					  tagName
+	    					  );
+	    	  mapRuners.put(oneFilePath, runner);
+	    	  Future<?> runnerFuture = executor.submit(runner);
+	    	  mapFuture.put(oneFilePath, runnerFuture);
+	    	  logger.info("{} is begin running",oneFilePath);
+	      }
+	    }
+	}
+	
+	public void stopTmp() {
+		logger.info("=stopTmp=> flume tail source stop begin time:"+new Date().toString());
+	    if(mapRuners !=null && !mapRuners.isEmpty()){
+	      for(ExecRunnable oneRunner : mapRuners.values()){
+	        if(oneRunner != null) {
+	          oneRunner.setRestart(false);
+	          oneRunner.kill();
+	        }
+	      }
+	    }
+	    mapRuners.clear();
+	    if(mapFuture !=null && !mapFuture.isEmpty()){
+	      for(Future<?> oneFuture : mapFuture.values()){
+	        if (oneFuture != null) {
+	          logger.debug("Stopping ExecTail runner");
+	          oneFuture.cancel(true);
+	          logger.debug("ExecTail runner stopped");
+	        }
+	      }
+	    }
+	    mapFuture.clear();
+	    
+	    executor.shutdown();
+	    while (!executor.isTerminated()) {
+	      logger.debug("Waiting for ExecTail executor service to stop");
+	      try {
+	        executor.awaitTermination(500, TimeUnit.MILLISECONDS);
+	      } catch (InterruptedException e) {
+	        logger.debug("Interrupted while waiting for ExecTail executor service "
+	            + "to stop. Just exiting.");
+	        Thread.currentThread().interrupt();
+	      }
+	    }
+	}
+	
+	@Override
+	public void stop() throws FlumeException {
+		stopTmp();
 
-    sourceCounter.stop();
-    super.stop();
-    logger.info("=stop=> flume tail source stop end time:"+new Date().toString());
+        try {
+            // Stop the Thread that flushes periodically
+            if (timedFuture != null) {
+            	timedFuture.cancel(true);
+            }
 
-  }
+            if (timedFlushService != null) {
+              timedFlushService.shutdown();
+              while (!timedFlushService.isTerminated()) {
+                try {
+                  timedFlushService.awaitTermination(500, TimeUnit.MILLISECONDS);
+                } catch (InterruptedException e) {
+                  logger.debug("Interrupted while waiting for ExecTail executor service "
+                          + "to stop. Just exiting.");
+                  Thread.currentThread().interrupt();
+                }
+              }
+            }
+            logger.info("=kill=> flume tail source kill end time:" + new Date().toString());
+          } catch (Exception ex) {
+            logger.error("=kill=>", ex);
+            Thread.currentThread().interrupt();
+          }
 
-  @Override
-  public void configure(Context context) {
-	String serializerClazz = context.getString(FileConstants.CONFIG_SERIALIZER, FileConstants.DEFAULT_SERIALIZER_CLASS);
-    try {
-      @SuppressWarnings("unchecked")
-	Class<? extends Configurable> clazz = (Class<? extends Configurable>) Class
-          .forName(serializerClazz);
-      Configurable serializerTmp = clazz.newInstance();
-
-      if (serializerTmp instanceof FileSerializer) {
-    	  serializer = (FileSerializer) serializerTmp;
-      } else {
-        throw new IllegalArgumentException(serializerClazz
-            + " is not an FileSerializer");
-      }
-    } catch (Exception e) {
-      logger.error("Could not instantiate serializer.", e);
-      Throwables.propagate(e);
-    }
-
-    filepath = context.getString(FileConstants.CONFIG_FILEPATH);
-    Preconditions.checkState(filepath != null,
-        "The parameter filepath must be specified");
-    logger.info("The parameter filepath is {}" ,filepath);
-
-    filenameRegExp = context.getString(FileConstants.CONFIG_FILENAME_REGEXP);
-    Preconditions.checkState(filenameRegExp != null,
-            "The parameter filenameRegExp must be specified");
-    logger.info("The parameter filenameRegExp is {}" ,filenameRegExp);
-
-    statusPath = context.getString(FileConstants.CONFIG_STATUS_DIRECTORY, 
-    		FileConstants.DEFAULT_STATUS_DIRECTORY);
-    
-    restartThrottle = context.getLong(ExecSourceConfigurationConstants.CONFIG_RESTART_THROTTLE,
-        ExecSourceConfigurationConstants.DEFAULT_RESTART_THROTTLE);
-
-    tailing = context.getBoolean(FileConstants.CONFIG_TAILING_THROTTLE,
-    		FileConstants.DEFAULT_ISTAILING_TRUE);
-
-    readinterval=context.getInteger(FileConstants.CONFIG_READINTERVAL_THROTTLE,
-    		FileConstants.DEFAULT_READINTERVAL);
-
-    tagName = context.getString(FileConstants.CONFIG_TAG_NAME);
-    
-    startAtBeginning=context.getBoolean(FileConstants.CONFIG_STARTATBEGINNING_THROTTLE,
-    		FileConstants.DEFAULT_STARTATBEGINNING);
-
-    restart = context.getBoolean(ExecSourceConfigurationConstants.CONFIG_RESTART,
-        ExecSourceConfigurationConstants.DEFAULT_RESTART);
-
-    logStderr = context.getBoolean(ExecSourceConfigurationConstants.CONFIG_LOG_STDERR,
-        ExecSourceConfigurationConstants.DEFAULT_LOG_STDERR);
-
-    bufferCount = context.getInteger(ExecSourceConfigurationConstants.CONFIG_BATCH_SIZE,
-        ExecSourceConfigurationConstants.DEFAULT_BATCH_SIZE);
-
-    batchTimeout = context.getLong(ExecSourceConfigurationConstants.CONFIG_BATCH_TIME_OUT,
-        ExecSourceConfigurationConstants.DEFAULT_BATCH_TIME_OUT);
-
-    charset = Charset.forName(context.getString(ExecSourceConfigurationConstants.CHARSET,
-        ExecSourceConfigurationConstants.DEFAULT_CHARSET));
-   
-    if (sourceCounter == null) {
-      sourceCounter = new SourceCounter(getName());
-    }
-  }
+	    sourceCounter.stop();
+	    super.stop();
+	    logger.info("=stop=> flume tail source stop end time:"+new Date().toString());
+	}
 
   /**
    * 获取指定路径下的所有文件列表
@@ -261,7 +379,6 @@ public class ExecTailSource extends AbstractSource implements EventDrivenSource,
             String oneFileName = file.getName();
             if(match(filenameRegExp,oneFileName)){
               listFile.add(file.getAbsolutePath());
-              logger.info("filename:{} is pass",oneFileName);
             }
           } else {
             //对于目录文件，递归调用
@@ -325,7 +442,6 @@ public class ExecTailSource extends AbstractSource implements EventDrivenSource,
       this.tagName = tagName;
     }
 
-
     private final SouceHelper sourceHelper; 
     private final AbstractFileSerializer serializer;
     private final ChannelProcessor channelProcessor;
@@ -338,8 +454,6 @@ public class ExecTailSource extends AbstractSource implements EventDrivenSource,
     private final Charset charset;
     private SystemClock systemClock = new SystemClock();
     private Long lastPushToChannel = systemClock.currentTimeMillis();
-    ScheduledExecutorService timedFlushService;
-    ScheduledFuture<?> future;
     private String filepath;
     private String tagName;
 
@@ -366,7 +480,7 @@ public class ExecTailSource extends AbstractSource implements EventDrivenSource,
     @Override
     public void run() {
       do {
-        logger.info("=run=> flume tail source run start time:"+new Date().toString());
+        logger.info("=run=> " + logfile.getName() + " flume tail source run start time:"+new Date().toString());
 
         long filePointer = 0;
         if (this.startAtBeginning) { //判断是否从头开始读文件
@@ -375,40 +489,15 @@ public class ExecTailSource extends AbstractSource implements EventDrivenSource,
         	filePointer = sourceHelper.getStatusFileLastIndex();
         }
         final List<Event> eventList = new ArrayList<Event>();
-
-        timedFlushService = Executors.newSingleThreadScheduledExecutor(
-                new ThreadFactoryBuilder().setNameFormat(
-                "timedFlushExecService" +
-                Thread.currentThread().getId() + "-%d").build());
         RandomAccessFile randomAccessFile = null;
         try {
           randomAccessFile= new RandomAccessFile(logfile, "r"); //创建随机读写文件
-          future = timedFlushService.scheduleWithFixedDelay(new Runnable() {
-                                                              @Override
-                                                              public void run() {
-                                                                try {
-                                                                  synchronized (eventList) {
-                                                                    if(!eventList.isEmpty() && timeout()) {
-                                                                      flushEventBatch(eventList);
-                                                                    }
-                                                                  }
-                                                                } catch (Exception e) {
-                                                                  logger.error("Exception occured when processing event batch", e);
-                                                                  if(e instanceof InterruptedException) {
-                                                                    Thread.currentThread().interrupt();
-                                                                  }
-                                                                }
-                                                              }
-                                                            },
-                  batchTimeout, batchTimeout, TimeUnit.MILLISECONDS);
-
           while (this.tailing) {
             long fileLength = this.logfile.length();
             if (fileLength < filePointer) {
-              randomAccessFile = new RandomAccessFile(logfile, "r");
-              filePointer = 0;
+              logger.info("=run=> " + logfile.getName() + "fileLength < filePointer 状态当前长度 < 文件最大长度 ");
+              break;
             }
-            
             if (fileLength > filePointer) {
               randomAccessFile.seek(filePointer);
               String line = nextLine(randomAccessFile);
@@ -417,53 +506,43 @@ public class ExecTailSource extends AbstractSource implements EventDrivenSource,
               while (line != null) {
             	if (StringUtils.isNotBlank(line)) {
 	                //送channal
-	                synchronized (eventList) {
-	                  sourceCounter.incrementEventReceivedCount();
-	                  HashMap<String, Object> body = new HashMap<String, Object>();
-	                  if (StringUtils.isNotBlank(tagName)) {
-	                	  body.put("@tagname", tagName);
-	                  }
-	                  body.put("@filepath", filepath);
-	                  body.put("@createdate", FileConstants.DEFAULT_DATE_FORMAT.format(new Date()));
-	                  body.put("@timestamp", System.currentTimeMillis());
-	                  body.put("@localHostIp", HostUtils.getLocalHostIp());
-	                  body.put("@localHostName", HostUtils.getLocalHostName());
-	                  body.putAll(serializer.getContentBuilder(line));
-	                  if (!body.containsKey("insert_date")) {
-	                	  body.put("insert_date", lastDateTime);
-	                  } else {
-	                	  lastDateTime = body.get("insert_date");
-	                  }
-	                  
-	                  if (!body.containsKey("level")) {
-	                	  body.put("level", lastLevel);
-	                  } else {
-	                	  lastLevel = body.get("level");
-	                  }
-	                  String bodyjson = JSONValue.toJSONString(body);
-	                  Event oneEvent = EventBuilder.withBody(bodyjson.getBytes(charset));
-	                  eventList.add(oneEvent);
-	                  if(eventList.size() >= bufferCount || timeout()) {
-	                    flushEventBatch(eventList);
-	                    filePointer = randomAccessFile.getFilePointer();
-	                    sourceHelper.updateStatusFile(filePointer);
-	                  }
-	                }
+                  sourceCounter.incrementEventReceivedCount();
+                  HashMap<String, Object> body = new HashMap<String, Object>();
+                  if (StringUtils.isNotBlank(tagName)) {
+                	  body.put("@tagname", tagName);
+                  }
+                  body.put("@filepath", filepath);
+                  body.put("@createdate", FileConstants.DEFAULT_DATE_FORMAT.format(new Date()));
+                  body.put("@timestamp", System.currentTimeMillis());
+                  body.put("@localHostIp", HostUtils.getLocalHostIp());
+                  body.put("@localHostName", HostUtils.getLocalHostName());
+                  body.putAll(serializer.getContentBuilder(line));
+                  if (!body.containsKey("insert_date")) {
+                	  body.put("insert_date", lastDateTime);
+                  } else {
+                	  lastDateTime = body.get("insert_date");
+                  }
+                  
+                  if (!body.containsKey("level")) {
+                	  body.put("level", lastLevel);
+                  } else {
+                	  lastLevel = body.get("level");
+                  }
+                  String bodyjson = JSONValue.toJSONString(body);
+                  Event oneEvent = EventBuilder.withBody(bodyjson.getBytes(charset));
+                  eventList.add(oneEvent);
+                  flushEventBatch(eventList,randomAccessFile.getFilePointer());
             	}
                 //读下一行
                 line = nextLine(randomAccessFile);
               }
               filePointer = randomAccessFile.getFilePointer();
             }
+            flushEventBatch(eventList,randomAccessFile.getFilePointer());
             Thread.sleep(this.readinterval);
           }
-
-          synchronized (eventList) {
-              if(!eventList.isEmpty()) {
-                flushEventBatch(eventList);
-              }
-          }
-          sourceHelper.updateStatusFile(filePointer);
+          
+          flushEventBatch(eventList,randomAccessFile.getFilePointer());
         } catch (Exception e) {
           logger.error("Failed while running filpath: " + filepath, e);
           if(e instanceof InterruptedException) {
@@ -478,7 +557,6 @@ public class ExecTailSource extends AbstractSource implements EventDrivenSource,
               logger.error("Failed to close reader for ExecTail source", ex);
             }
           }
-
         }
         logger.info("=run=> flume tail source run restart:"+restart);
         if(restart) {
@@ -514,12 +592,22 @@ public class ExecTailSource extends AbstractSource implements EventDrivenSource,
     	return line;
     }
     
-    private void flushEventBatch(List<Event> eventList){
-      if ( channelProcessor != null )  
-    	  channelProcessor.processEventBatch(eventList);
-      sourceCounter.addToEventAcceptedCount(eventList.size());
-      eventList.clear();
-      lastPushToChannel = systemClock.currentTimeMillis();
+    /**
+     * 批量刷新，并更新状态； 
+     * @param eventList
+     * @param filePointer
+     */
+    private  void flushEventBatch(List<Event> eventList, Long filePointer){
+//      synchronized(eventList)
+      if(eventList.size() >= bufferCount || timeout()) {
+	      if ( channelProcessor != null )  
+	    	  channelProcessor.processEventBatch(eventList);
+	      sourceCounter.addToEventAcceptedCount(eventList.size());
+	      eventList.clear();
+	      lastPushToChannel = systemClock.currentTimeMillis();
+	      sourceHelper.updateStatusFile(filePointer);
+	      logger.info("logfilePath:" + logfile.getName() + ":flushEventBatch date sourceCounter.getEventAcceptedCount():" + sourceCounter.getEventAcceptedCount());
+      }
     }
 
     private boolean timeout(){
@@ -537,74 +625,39 @@ public class ExecTailSource extends AbstractSource implements EventDrivenSource,
     public int kill() {
       logger.info("=kill=> flume tail source kill start time:"+new Date().toString());
       this.tailing=false;
-        synchronized (this.getClass()) {
-          try {
-            // Stop the Thread that flushes periodically
-            if (future != null) {
-              future.cancel(true);
-            }
-
-            if (timedFlushService != null) {
-              timedFlushService.shutdown();
-              while (!timedFlushService.isTerminated()) {
-                try {
-                  timedFlushService.awaitTermination(500, TimeUnit.MILLISECONDS);
-                } catch (InterruptedException e) {
-                  logger.debug("Interrupted while waiting for ExecTail executor service "
-                          + "to stop. Just exiting.");
-                  Thread.currentThread().interrupt();
-                }
-              }
-            }
-            logger.info("=kill=> flume tail source kill end time:" + new Date().toString());
-            return Integer.MIN_VALUE;
-          } catch (Exception ex) {
-            logger.error("=kill=>", ex);
-            Thread.currentThread().interrupt();
-          }
-        }
+//        synchronized (this.getClass()) {
+//          try {
+//            // Stop the Thread that flushes periodically
+//            if (future != null) {
+//              future.cancel(true);
+//            }
+//
+//            if (timedFlushService != null) {
+//              timedFlushService.shutdown();
+//              while (!timedFlushService.isTerminated()) {
+//                try {
+//                  timedFlushService.awaitTermination(500, TimeUnit.MILLISECONDS);
+//                } catch (InterruptedException e) {
+//                  logger.debug("Interrupted while waiting for ExecTail executor service "
+//                          + "to stop. Just exiting.");
+//                  Thread.currentThread().interrupt();
+//                }
+//              }
+//            }
+//            logger.info("=kill=> flume tail source kill end time:" + new Date().toString());
+//            return Integer.MIN_VALUE;
+//          } catch (Exception ex) {
+//            logger.error("=kill=>", ex);
+//            Thread.currentThread().interrupt();
+//          }
+//        }
       logger.info("=kill=> flume tail source kill end time:"+new Date().toString());
       return Integer.MIN_VALUE / 2;
     }
+    
     public void setRestart(boolean restart) {
       this.restart = restart;
     }
   }
-  private static class StderrReader extends Thread {
-    private BufferedReader input;
-    private boolean logStderr;
 
-    protected StderrReader(BufferedReader input, boolean logStderr) {
-      this.input = input;
-      this.logStderr = logStderr;
-    }
-
-
-
-    @Override
-    public void run() {
-      try {
-        int i = 0;
-        String line = null;
-        while((line = input.readLine()) != null) {
-          if(logStderr) {
-            // There is no need to read 'line' with a charset
-            // as we do not to propagate it.
-            // It is in UTF-16 and would be printed in UTF-8 format.
-            logger.info("StderrLogger[{}] = '{}'", ++i, line);
-          }
-        }
-      } catch (IOException e) {
-        logger.info("StderrLogger exiting", e);
-      } finally {
-        try {
-          if(input != null) {
-            input.close();
-          }
-        } catch (IOException ex) {
-          logger.error("Failed to close stderr reader for ExecTail source", ex);
-        }
-      }
-    }
-  }
 }

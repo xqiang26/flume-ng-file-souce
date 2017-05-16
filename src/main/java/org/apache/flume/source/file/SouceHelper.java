@@ -1,9 +1,11 @@
 package org.apache.flume.source.file;
 
 import java.io.File;
+import java.io.FileNotFoundException;
 import java.io.FileReader;
 import java.io.FileWriter;
 import java.io.IOException;
+import java.io.RandomAccessFile;
 import java.io.Writer;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -35,13 +37,13 @@ public class SouceHelper {
 		directory = new File(statusFilePath);
 		statusFileJsonMap = new LinkedHashMap<String, Long>();
         
-		LOG.info(">=statusFilePath:" + statusFilePath + "/" + statusFileName);
+//		LOG.info(">=statusFilePath:" + statusFilePath + "/" + statusFileName);
 		
 		if (!(isStatusDirectoryCreated())) {
 			createDirectory();
 		}
 		
-		LOG.info(">=statusFilePath:" + statusFilePath + "/" + statusFileName);
+//		LOG.info(">=statusFilePath:" + statusFilePath + "/" + statusFileName);
 		file = new File(statusFilePath + "/" + statusFileName);
 		if (file == null || !isStatusFileCreated()){
 			currentIndex = 0L;
@@ -59,6 +61,15 @@ public class SouceHelper {
 		return directory.exists() && !directory.isFile() ? true: false;
 	}
 	
+	/**
+	 * 文件重命名
+	 * @param reName
+	 * @return
+	 */
+	public boolean rename(String reName) {
+		File dest = new File(statusFilePath + "\\" + reName);
+		return file.renameTo(dest);
+	}
 	/**
 	 * Create status file
 	 */
