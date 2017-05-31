@@ -67,7 +67,7 @@ public class SouceHelper {
 	 * @return
 	 */
 	public boolean rename(String reName) {
-		File dest = new File(statusFilePath + "\\" + reName);
+		File dest = new File(statusFilePath + "/" + reName);
 		return file.renameTo(dest);
 	}
 	/**

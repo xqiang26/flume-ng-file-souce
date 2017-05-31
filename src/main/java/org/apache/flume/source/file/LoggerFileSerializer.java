@@ -1,31 +1,24 @@
 package org.apache.flume.source.file;
 
 import java.util.Map;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
+import org.apache.commons.lang.StringUtils;
 import org.apache.flume.Context;
-import org.apache.flume.conf.ComponentConfiguration;
 
-import com.google.common.collect.Maps;
-
-public class LoggerFileSerializer  extends RandomFileSerializer {
-    
-	@Override
-	public void configure(Context arg0) {
-		// TODO Auto-generated method stub
-
-	}
+public class LoggerFileSerializer extends RandomFileSerializer {
+	private String logNameTag;
 
 	@Override
-	public void configure(ComponentConfiguration arg0) {
-		// TODO Auto-generated method stub
+	public void configure(Context context) {
+		logNameTag = context.getString(FileConstants.CONFIG_LOG_STRUCT_LOGNAME,
+				FileConstants.DEFAULT_LOG_STRUCT_LOGNAME);
 	}
-	   
+
 	@Override
 	public Map<String, Object> getContentBuilder(String line) {
-		Map<String,Object> result = super.getContentBuilder(line);
-		if (result.containsKey("message")) {
+		Map<String, Object> result = super.getContentBuilder(line);
+		if (result.containsKey("message") && result.containsKey("logname") && StringUtils.isNotBlank(logNameTag)
+				&& logNameTag.compareToIgnoreCase(result.get("logname").toString()) == 0) {
 			String message = result.get("message").toString();
 			String[] arraySplit = message.split("\\|");
 			for (String split : arraySplit) {
@@ -34,6 +27,7 @@ public class LoggerFileSerializer  extends RandomFileSerializer {
 					result.put(one[0], one[1]);
 				}
 			}
+			result.remove("message");
 		}
 		return result;
 	}
